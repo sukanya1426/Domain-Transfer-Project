@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  traefik:
+    image: traefik:v2.10
+    container_name: traefik
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - web
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik-data/traefik.yml:/traefik.yml:ro
+      - ./traefik-data/acme.json:/acme.json
+    labels:
+      - "traefik.enable=true"
+      # Traefik Dashboard setup
+      - "traefik.http.routers.traefik.rule=Host(`traefik.sigmoix.com`)"
+      - "traefik.http.routers.traefik.service=api@internal"
+      - "traefik.http.routers.traefik.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.traefik.middlewares=auth"
+      # Basic Auth for Dashboard: admin / password (generated using htpasswd)
+      - "traefik.http.middlewares.auth.basicauth.users=admin:$$apr1$$H6uskkkW$$IgXLP6ewTrSuBkTrqE8wj/"
+
+  website:
+    build: ./website
+    container_name: poc-website
+    restart: unless-stopped
+    networks:
+      - web
+    labels:
+      - "traefik.enable=true"
+      # Route for platform subdomain
+      - "traefik.http.routers.website.rule=Host(`test.sigmoix.com`)"
+      - "traefik.http.routers.website.tls.certresolver=letsencrypt"
+
+networks:
+  web:
+    name: web_network
