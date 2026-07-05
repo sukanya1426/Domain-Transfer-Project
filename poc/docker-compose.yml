@@ -1,44 +1,31 @@
-version: '3.8'
-
 services:
-  traefik:
-    image: traefik:v2.10
-    container_name: traefik
-    restart: unless-stopped
-    security_opt:
-      - no-new-privileges:true
-    networks:
-      - web
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - /etc/localtime:/etc/localtime:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ./traefik-data/traefik.yml:/traefik.yml:ro
-      - ./traefik-data/acme.json:/acme.json
-    labels:
-      - "traefik.enable=true"
-      # Traefik Dashboard setup
-      - "traefik.http.routers.traefik.rule=Host(`traefik.sigmoix.com`)"
-      - "traefik.http.routers.traefik.service=api@internal"
-      - "traefik.http.routers.traefik.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.traefik.middlewares=auth"
-      # Basic Auth for Dashboard: admin / password (generated using htpasswd)
-      - "traefik.http.middlewares.auth.basicauth.users=admin:$$apr1$$H6uskkkW$$IgXLP6ewTrSuBkTrqE8wj/"
-
   website:
     build: ./website
     container_name: poc-website
     restart: unless-stopped
     networks:
-      - web
+      - traefik-net
     labels:
       - "traefik.enable=true"
-      # Route for platform subdomain
-      - "traefik.http.routers.website.rule=Host(`test.sigmoix.com`)"
-      - "traefik.http.routers.website.tls.certresolver=letsencrypt"
+
+      # --- Platform subdomain (auto-provisioned, ZERO DNS config) ---
+      # sslip.io wildcard DNS resolves any *.37.27.203.157.sslip.io host
+      # straight to the VM IP, so no domain/nameserver setup is ever needed.
+      - "traefik.http.routers.platform.rule=Host(`poc.37.27.203.157.sslip.io`)"
+      - "traefik.http.routers.platform.entrypoints=websecure"
+      - "traefik.http.routers.platform.tls=true"
+      - "traefik.http.routers.platform.tls.certresolver=letsencrypt"
+
+      # --- Custom domains (added when a customer points DNS to the VM) ---
+      # These only serve once the domain's A record -> 37.27.203.157.
+      - "traefik.http.routers.custom.rule=Host(`sukanya1426.me`,`www.sukanya1426.me`)"
+      - "traefik.http.routers.custom.entrypoints=websecure"
+      - "traefik.http.routers.custom.tls=true"
+      - "traefik.http.routers.custom.tls.certresolver=letsencrypt"
+
+      - "traefik.http.services.website.loadbalancer.server.port=80"
+      - "traefik.docker.network=traefik-net"
 
 networks:
-  web:
-    name: web_network
+  traefik-net:
+    external: true

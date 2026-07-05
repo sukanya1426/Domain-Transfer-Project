@@ -20,7 +20,7 @@ providers:
 certificatesResolvers:
   letsencrypt:
     acme:
-      email: admin@sigmoix.com
+      email: admin@example.com
       storage: acme.json
       httpChallenge:
         entryPoint: web
