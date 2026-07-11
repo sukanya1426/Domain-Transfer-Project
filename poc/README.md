@@ -1,68 +1,56 @@
 # Sigmoix Domain Onboarding POC
 
-This workspace contains a small proof-of-concept for onboarding a website from a platform-managed subdomain and later mapping it to a custom domain using Docker, an existing shared Traefik instance, and Let's Encrypt.
+A proof-of-concept for the "add your domain" flow: a website goes live instantly on
+an auto-generated platform subdomain, then can be mapped to a customer's own custom
+domain — both served over HTTPS with automatic Let's Encrypt certificates via a shared
+Traefik reverse proxy.
 
-## Directory Structure
+## Goal
 
-- `poc/website/index.html` - static demo homepage
-- `poc/website/Dockerfile` - production image for the website
-- `poc/website/nginx.conf` - Nginx site configuration
-- `poc/docker-compose.yml` - website deployment that joins the shared Traefik network
-- `poc/traefik-data/traefik.yml` - Traefik static configuration
-- `poc/traefik-data/acme.json` - Let's Encrypt certificate store
+Demonstrate the two-stage onboarding path used by platforms like Vercel/Netlify:
 
-## What the demo serves
+1. **Instant subdomain** — a site is reachable with a valid TLS cert the moment the
+   container starts, with zero DNS configuration.
+2. **Custom domain** — the customer points their domain's DNS at the VM and the same
+   site is automatically served on their domain with its own cert.
 
-- `Sigmoix Domain Onboarding Demo`
-- the current hostname
-- the current timestamp
-- a success message
+## Input
 
-## Domains
+- Static website served by Nginx (`website/index.html`).
+- A VM (Hetzner Ubuntu, IP `37.27.203.157`) running Docker and a shared Traefik instance
+  with a `letsencrypt` cert resolver, watching the external `traefik-net` Docker network.
 
-### Platform subdomain — no DNS configuration required
+## Output
 
-The platform subdomain uses **sslip.io wildcard DNS**, which resolves any
-hostname containing an embedded IP straight to that IP. No domain, registrar,
-or nameserver setup is ever needed.
+The website reachable over HTTPS, with real Let's Encrypt certificates, on:
 
-- `poc.37.27.203.157.sslip.io` -> `37.27.203.157` (automatic, always)
+- `https://poc.37.27.203.157.sslip.io` — platform subdomain, works immediately.
+- `https://sukanya1426.me` / `https://www.sukanya1426.me` — custom domain, after DNS is pointed at the VM.
 
-This is the zero-config equivalent of a `*.vercel.app` subdomain: it works the
-instant the container is up and Let's Encrypt issues a real certificate for it
-over the HTTP-01 challenge.
+## How it works
 
-> We deliberately do **not** use `sigmoix.com` for the platform subdomain — its
-> authoritative nameservers are Afternic's (`ns1/ns2.afternic.com`), not a zone
-> we control, so records added in Namecheap are never served publicly.
+- **Platform subdomain** uses [sslip.io](https://sslip.io) wildcard DNS, which resolves any
+  hostname containing an embedded IP straight to that IP. No domain, registrar, or nameserver
+  setup is needed — this is the `*.vercel.app` equivalent.
+- **Custom domains** only serve once the domain owner adds an A record pointing to the VM.
+- Traefik routes each host to the website container and issues per-host certs, all driven by
+  the Docker labels in `docker-compose.yml`. HTTP (port 80) is redirected to HTTPS.
 
-### Custom domains — customer points DNS to the VM
+## Configuration
 
-These only begin serving once the domain owner adds an A record to the VM. This
-is the real "add your domain" onboarding step.
+Routing and TLS are defined by Docker labels in `docker-compose.yml`. To adapt this POC:
 
-- `sukanya1426.me` -> `37.27.203.157`
-- `www.sukanya1426.me` -> `37.27.203.157`
+1. **Set the VM IP** — replace `37.27.203.157` in the platform subdomain host rule
+   (`poc.<IP>.sslip.io`) with your VM's public IP.
+2. **Set the custom domain** — replace `sukanya1426.me` / `www.sukanya1426.me` in the
+   `custom` router's `Host(...)` rule with the customer's domain, and have the owner add an
+   A record for it pointing to the VM IP.
+3. **Confirm Traefik prerequisites** — the shared Traefik instance must have the `letsencrypt`
+   cert resolver configured and watch the external `traefik-net` network.
 
-## VM setup commands
+## Deploy
 
-Run these on the Hetzner Ubuntu VM:
-
-```bash
-apt-get update
-apt-get install -y ca-certificates curl gnupg lsb-release
-curl -fsSL https://get.docker.com | sh
-apt-get install -y docker-compose-plugin
-systemctl enable docker
-systemctl start docker
-docker version
-docker compose version
-docker network inspect traefik-net
-```
-
-## Deployment commands
-
-From the `poc` directory on the VM:
+Run on the VM, from the `poc` directory:
 
 ```bash
 docker compose up -d --build
@@ -70,30 +58,22 @@ docker compose ps
 docker compose logs -f website
 ```
 
-Before the first public deploy, confirm that the shared Traefik instance already has the `letsencrypt` certificate resolver configured and that it watches the `traefik-net` Docker network.
+Requirements on a fresh VM: Docker + the Docker Compose plugin, and the external
+`traefik-net` network created (`docker network inspect traefik-net`).
 
-## Verification commands
+## Verify
 
 ```bash
-# Platform subdomain — should work immediately, no DNS setup
-curl -I http://poc.37.27.203.157.sslip.io      # 308 redirect to HTTPS
+# Platform subdomain — works immediately, no DNS setup
 curl -I https://poc.37.27.203.157.sslip.io     # 200, valid Let's Encrypt cert
 
-# Custom domains — only after the owner points DNS to 37.27.203.157
+# Custom domain — only after the owner points DNS at the VM
 curl -I https://sukanya1426.me
-curl -I https://www.sukanya1426.me
 ```
-
-## Traefik notes
-
-- HTTP traffic on port 80 is redirected to HTTPS.
-- The website container must join the same Docker network as Traefik.
-- Traefik routes are defined by Docker labels on the website container.
-- The shared Traefik instance should already be responsible for dashboard access and certificate storage.
 
 ## Troubleshooting
 
-- The platform subdomain (`*.sslip.io`) needs no DNS work; if its cert fails, check that port 80 is reachable from the internet and the shared Traefik instance has the `letsencrypt` resolver.
-- If a custom-domain certificate issuance fails, verify that DNS has propagated to `37.27.203.157`, port 80 is reachable, and the shared Traefik instance is listening for the `letsencrypt` resolver.
-- If the website returns 404, confirm the host rule labels on the website container (and, for custom domains, the DNS records).
-- If the website container is not reachable, check that the container is attached to `traefik-net` and that Traefik is using the same network.
+- **Cert issuance fails** — check that port 80 is reachable from the internet, the
+  `letsencrypt` resolver is configured, and (for custom domains) that DNS has propagated to the VM.
+- **404** — confirm the `Host(...)` label rules on the website container match the URL.
+- **Container unreachable** — confirm it is attached to `traefik-net` and Traefik uses the same network.
